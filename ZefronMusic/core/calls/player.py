@@ -82,13 +82,12 @@ class CallPlayer:
             raise
 
         # PyTgCalls passes these parameters to both ffprobe and ffmpeg.
-        # Keep them compatible with ffprobe; options accepted only by ffmpeg
-        # can make stream validation return empty JSON before playback starts.
+        # Keep this shared argument list minimal because FFmpeg-only buffering
+        # flags can make older Heroku ffprobe builds return empty JSON.
         if seek_time > 1:
-            # seek to the position first and keep the buffers
-            ffmpeg_params = f"-ss {seek_time} -probesize 10M -analyzeduration 5M -rtbufsize 5M -fflags +genpts+igndts"
+            ffmpeg_params = f"-ss {seek_time}"
         else:
-            ffmpeg_params = "-probesize 10M -analyzeduration 5M -rtbufsize 5M -fflags +genpts+igndts"
+            ffmpeg_params = None
 
         is_video = getattr(media, "video", False)
         video_flags = (
