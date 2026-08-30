@@ -12,6 +12,7 @@
 import re
 import glob
 import os
+import subprocess
 import time
 import asyncio
 from pathlib import Path
@@ -33,6 +34,74 @@ class Downloader:
         if video_id not in self._download_locks:
             self._download_locks[video_id] = asyncio.Lock()
         return self._download_locks[video_id]
+
+    async def _normalize_external_audio(
+        self, source: Path, target: Path
+    ) -> Optional[str]:
+        """Convert API audio responses to a real MP3 container.
+
+        Some media APIs return WebM/Opus bytes for an audio request while
+        naming the response `.mp3`. Local FFmpeg may still probe that file,
+        but Heroku's FFprobe can return empty JSON for the mislabeled input.
+        """
+        temporary_target = target.with_name(f".{target.stem}.normalized.mp3")
+
+        def _convert() -> bool:
+            try:
+                result = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-y",
+                        "-i",
+                        str(source),
+                        "-vn",
+                        "-c:a",
+                        "libmp3lame",
+                        "-b:a",
+                        "128k",
+                        "-ar",
+                        "48000",
+                        "-ac",
+                        "2",
+                        str(temporary_target),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+                if result.returncode != 0:
+                    logger.warning(
+                        f"⚠️ Could not normalize external audio for "
+                        f"{source.stem}: {result.stderr[-500:]}"
+                    )
+                    return False
+                return self._storage.is_valid_file(str(temporary_target))
+            except FileNotFoundError:
+                logger.warning(
+                    "⚠️ FFmpeg is unavailable; using the original external audio file."
+                )
+                return False
+            except (OSError, subprocess.TimeoutExpired) as ex:
+                logger.warning(
+                    f"⚠️ External audio normalization failed for {source.stem}: {ex}"
+                )
+                return False
+
+        try:
+            converted = await asyncio.to_thread(_convert)
+            if not converted:
+                return None
+            os.replace(temporary_target, target)
+            return str(target)
+        finally:
+            try:
+                if temporary_target.exists():
+                    temporary_target.unlink()
+            except OSError:
+                pass
 
     async def _download_with_external_api(
         self, video_id: str, video: bool = False
@@ -83,6 +152,20 @@ class Downloader:
                                 f"{video_id} at {api_url}; trying the next endpoint."
                             )
                             continue
+
+                        if not video:
+                            normalized = await self._normalize_external_audio(
+                                temporary, target
+                            )
+                            if normalized:
+                                try:
+                                    temporary.unlink()
+                                except OSError:
+                                    pass
+                                logger.info(
+                                    f"✅ Normalized external audio for {video_id} to MP3."
+                                )
+                                return normalized
 
                         os.replace(temporary, target)
                         logger.info(
