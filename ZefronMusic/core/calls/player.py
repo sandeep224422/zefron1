@@ -81,12 +81,14 @@ class CallPlayer:
         except errors.RPCError as e:
             raise
 
-        # Configure audio stream with optimized buffering for lag-free playback. larger buffers help reduce playback lag
+        # PyTgCalls passes these parameters to both ffprobe and ffmpeg.
+        # Keep them compatible with ffprobe; options accepted only by ffmpeg
+        # can make stream validation return empty JSON before playback starts.
         if seek_time > 1:
             # seek to the position first and keep the buffers
             ffmpeg_params = f"-ss {seek_time} -probesize 10M -analyzeduration 5M -rtbufsize 5M -fflags +genpts+igndts"
         else:
-            ffmpeg_params = "-probesize 10M -analyzeduration 5M -rtbufsize 5M -fflags +genpts+igndts -sync ext"
+            ffmpeg_params = "-probesize 10M -analyzeduration 5M -rtbufsize 5M -fflags +genpts+igndts"
 
         is_video = getattr(media, "video", False)
         video_flags = (
