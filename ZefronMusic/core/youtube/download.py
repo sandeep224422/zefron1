@@ -166,6 +166,15 @@ class Downloader:
                                     f"✅ Normalized external audio for {video_id} to MP3."
                                 )
                                 return normalized
+                            logger.warning(
+                                f"⚠️ External API audio for {video_id} could not be "
+                                "normalized; falling back to yt-dlp with cookies."
+                            )
+                            try:
+                                temporary.unlink()
+                            except OSError:
+                                pass
+                            continue
 
                         os.replace(temporary, target)
                         logger.info(
@@ -330,15 +339,23 @@ class Downloader:
 
             # **PERFORMANCE FIX**: Use semaphore to limit concurrent downloads
             async with self._download_semaphore:
-                # Prefer the configured external downloader for regular media.
-                # Live streams still require yt-dlp's direct stream extraction.
+                # Always try the external API before yt-dlp. Cookies are only
+                # used by the fallback path below if the API is unavailable or
+                # cannot return usable media.
                 if not is_live:
+                    logger.info(
+                        f"⬇️ Trying external media API first for {video_id} "
+                        "before cookies-enabled yt-dlp fallback."
+                    )
                     external_file = await self._download_with_external_api(
                         video_id, video=video
                     )
                     if external_file:
                         return external_file
 
+                logger.info(
+                    f"⬇️ Falling back to yt-dlp with cookies for {video_id}."
+                )
                 cookie = self._cookies.get_cookies()
                 base_opts = {
                     "outtmpl": "downloads/%(id)s.%(ext)s",
